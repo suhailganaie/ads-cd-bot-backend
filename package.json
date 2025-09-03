@@ -1,0 +1,28 @@
+{
+  "name": "ads-cd-bot-backend",
+  "version": "1.0.0",
+  "description": "ADS_CD_BOT - Telegram Ad Reward Mini App Backend",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "build": "npm install"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "pg": "^8.11.0",
+    "cors": "^2.8.5",
+    "axios": "^1.6.0",
+    "dotenv": "^16.0.3",
+    "node-cron": "^3.0.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "keywords": ["telegram", "bot", "rewards", "ads", "mini-app", "lottery"],
+  "author": "ADS_CD_BOT",
+  "license": "MIT"
+}
