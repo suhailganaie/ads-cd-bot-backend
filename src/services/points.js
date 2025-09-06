@@ -1,0 +1,7 @@
+export const POINTS = {
+  AD_MAIN: 2,
+  AD_SIDE: 1,
+  TASK: 20,
+  INVITE_GIVER: 50,
+  INVITE_RECEIVER: 20
+};
