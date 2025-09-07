@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import helmet from 'helmet';
 import { corsMw } from './middleware/cors.js';
+app.use(corsMw);
 import { health } from './routes/health.js';
 import { auth as authRoutes } from './routes/auth.js';
 import { ads } from './routes/ads.js';
