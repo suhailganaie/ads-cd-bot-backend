@@ -14,6 +14,8 @@ app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json());
 app.use(corsMw);                             // then apply middleware
 
+// Root landing
+app.get('/', (_req, res) => res.send('ADS BOT API is running. Try /api/health'));
 app.use('/api', health);
 app.use('/api', authRoutes);
 app.use('/api', ads);
