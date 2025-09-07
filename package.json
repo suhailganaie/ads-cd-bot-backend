@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "migrate": "psql \"$DATABASE_URL\" -f src/models/users.sql && psql \"$DATABASE_URL\" -f src/models/events.sql"
+    "migrate": "psql \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f sql/001_init.sql"
   },
   "dependencies": {
     "cors": "2.8.5",
