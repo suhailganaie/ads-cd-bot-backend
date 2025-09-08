@@ -4,10 +4,11 @@ import { auth, requireAuth } from '../middleware/auth.js';
 import { createWithdrawal, MIN_TOKENS, RATIO } from '../services/withdrawals.js';
 import { query } from '../db.js';
 import { z } from 'zod';
+import { requireAdmin } from '../middleware/admin.js';
 
 export const withdrawals = Router();
 
-// Basic EVM address shape (0x + 40 hex); swap to EIP-55 lib if needed
+// Basic EVM address shape (0x + 40 hex); swap to EIP-55 later if needed
 const zEthAddress = z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'invalid_address').max(200);
 
 const zWithdraw = z.object({
@@ -18,7 +19,7 @@ const zWithdraw = z.object({
 // Public rules for client UI
 withdrawals.get('/withdrawals/rules', (_req, res) => {
   res.json({ ratio: RATIO, min_tokens: MIN_TOKENS });
-}); // Exposing rule metadata is a common pattern for client-side validation. [web:3035]
+}); // Simple metadata endpoint for frontends. [web:3265]
 
 // Create a withdrawal request (user)
 withdrawals.post('/withdrawals', auth, asyncHandler(async (req, res) => {
@@ -27,13 +28,12 @@ withdrawals.post('/withdrawals', auth, asyncHandler(async (req, res) => {
   const result = await createWithdrawal(req.user.id, body.tokens, body.address);
   if (!result.ok) return res.status(400).json(result);
   res.status(201).json(result);
-})); // Route-level schema validation keeps inputs safe at the edge. [web:3032][web:3041]
+})); // Validate at the edge and delegate to service. [web:3265]
 
 // ---------- Admin review endpoints ----------
 
 // List pending requests (admin)
-withdrawals.get('/withdrawals/pending', requireAuth, asyncHandler(async (req, res) => {
-  // TODO: add your own admin check here (e.g., req.user.role === 'admin')
+withdrawals.get('/withdrawals/pending', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
   const { rows } = await query(
     `select w.id, u.telegram_id, u.username, w.tokens, w.points_debited, w.status, w.address, w.created_at
      from withdrawals w
@@ -43,47 +43,55 @@ withdrawals.get('/withdrawals/pending', requireAuth, asyncHandler(async (req, re
      limit 200`
   );
   res.json({ items: rows });
-})); // Separate read endpoint for queues is standard REST routing. [web:2974]
+})); // Separate read endpoint for queues is a common REST pattern. [web:3265]
 
 // Approve (finalize) a pending request (admin)
 const zApprove = z.object({ tx_hash: z.string().max(100).optional() });
-withdrawals.post('/withdrawals/:id/approve', requireAuth, asyncHandler(async (req, res) => {
-  // TODO: admin guard here
+withdrawals.post('/withdrawals/:id/approve', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   z.number().int().positive().parse(id);
-  zApprove.parse(req.body || {}); // tx hash optional for audit
+  zApprove.parse(req.body || {}); // tx_hash optional for audit
 
   await query('begin');
+
+  // Lock the withdrawal row to prevent concurrent processing
   const { rows: [w] } = await query(
-    `select id, user_id, tokens, points_debited, status from withdrawals where id=$1 for update`,
+    `select id, user_id, tokens, points_debited, status
+       from withdrawals
+      where id=$1 for update`,
     [id]
-  ); // Row lock to ensure single action. [web:3042][web:3039]
+  ); // Row lock ensures single approval/rejection. [web:3094][web:3272]
   if (!w) { await query('rollback'); return res.status(404).json({ error: 'not_found' }); }
   if (w.status !== 'pending') { await query('rollback'); return res.status(400).json({ error: 'not_pending' }); }
 
+  // Finalize without changing points (already debited on creation)
   const { rows: [updated] } = await query(
-    `update withdrawals set status='approved', updated_at = now()
-     where id=$1 returning id, status, updated_at`,
+    `update withdrawals set status='approved'
+      where id=$1
+      returning id, status`,
     [id]
   );
 
   await query('commit');
   res.json({ ok: true, withdrawal: updated });
-})); // Points were already debited at request time; approval only finalizes. [web:2974]
+})); // Approval only changes status; accounting was handled at request time. [web:3277]
 
 // Reject (refund) a pending request (admin)
 const zReject = z.object({ reason: z.string().max(200).optional() });
-withdrawals.post('/withdrawals/:id/reject', requireAuth, asyncHandler(async (req, res) => {
-  // TODO: admin guard here
+withdrawals.post('/withdrawals/:id/reject', requireAuth, requireAdmin, asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   z.number().int().positive().parse(id);
   const { reason } = zReject.parse(req.body || {});
 
   await query('begin');
+
+  // Lock the withdrawal row to prevent concurrent processing
   const { rows: [w] } = await query(
-    `select id, user_id, tokens, points_debited, status from withdrawals where id=$1 for update`,
+    `select id, user_id, tokens, points_debited, status
+       from withdrawals
+      where id=$1 for update`,
     [id]
-  ); // Locked row avoids double-processing. [web:3042][web:3039]
+  ); // Ensures refund is applied at most once. [web:3094][web:3272]
   if (!w) { await query('rollback'); return res.status(404).json({ error: 'not_found' }); }
   if (w.status !== 'pending') { await query('rollback'); return res.status(400).json({ error: 'not_pending' }); }
 
@@ -95,8 +103,9 @@ withdrawals.post('/withdrawals/:id/reject', requireAuth, asyncHandler(async (req
   );
 
   const { rows: [updated] } = await query(
-    `update withdrawals set status='rejected', updated_at=now()
-     where id=$1 returning id, status, updated_at`,
+    `update withdrawals set status='rejected'
+      where id=$1
+      returning id, status`,
     [id]
   );
 
